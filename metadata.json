@@ -1,0 +1,6 @@
+{
+  "name": "Selah",
+  "description": "An AI Bible companion to chat about Scripture, understand verses, and reflect on life today.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
