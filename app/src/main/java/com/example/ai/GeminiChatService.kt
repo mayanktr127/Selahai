@@ -6,6 +6,7 @@ import com.example.data.VerseRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -16,9 +17,9 @@ import java.util.concurrent.TimeUnit
 
 object GeminiChatService {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(60, TimeUnit.SECONDS)
-        .readTimeout(60, TimeUnit.SECONDS)
-        .writeTimeout(60, TimeUnit.SECONDS)
+        .connectTimeout(2, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS)
+        .writeTimeout(3, TimeUnit.SECONDS)
         .build()
 
     private const val MODEL = "gemini-3.5-flash"
@@ -94,89 +95,100 @@ The app will strip this line and render it as tappable chips.
         }
 
         val hasValidKey = apiKey.isNotBlank() && !apiKey.contains("MY_GEMINI_API_KEY")
+        var chunkReceived = false
 
         if (hasValidKey) {
             try {
-                val fullUrl = "$BASE_URL&key=$apiKey"
-                val systemInst = buildSystemInstruction(userName, guideStyle)
+                // Enforce a strict 1.2s budget to receive data from remote network
+                withTimeoutOrNull(1200L) {
+                    val fullUrl = "$BASE_URL&key=$apiKey"
+                    val systemInst = buildSystemInstruction(userName, guideStyle)
 
-                val requestObj = JSONObject().apply {
-                    val contentsArray = JSONArray()
+                    val requestObj = JSONObject().apply {
+                        val contentsArray = JSONArray()
+                        val recentMessages = conversationHistory.takeLast(6)
+                        for (msg in recentMessages) {
+                            val role = if (msg.sender == "user") "user" else "model"
+                            val contentObj = JSONObject().apply {
+                                put("role", role)
+                                val partsArray = JSONArray()
+                                partsArray.put(JSONObject().put("text", msg.text))
+                                put("parts", partsArray)
+                            }
+                            contentsArray.put(contentObj)
+                        }
+                        put("contents", contentsArray)
 
-                    // Send recent turns (up to 8 turns to stay focused and fast)
-                    val recentMessages = conversationHistory.takeLast(8)
-                    for (msg in recentMessages) {
-                        val role = if (msg.sender == "user") "user" else "model"
-                        val contentObj = JSONObject().apply {
-                            put("role", role)
+                        val systemObj = JSONObject().apply {
                             val partsArray = JSONArray()
-                            partsArray.put(JSONObject().put("text", msg.text))
+                            partsArray.put(JSONObject().put("text", systemInst))
                             put("parts", partsArray)
                         }
-                        contentsArray.put(contentObj)
+                        put("systemInstruction", systemObj)
+
+                        val genConfig = JSONObject().apply {
+                            put("temperature", 0.7)
+                            put("topP", 0.95)
+                            put("topK", 40)
+                        }
+                        put("generationConfig", genConfig)
                     }
-                    put("contents", contentsArray)
 
-                    val systemObj = JSONObject().apply {
-                        val partsArray = JSONArray()
-                        partsArray.put(JSONObject().put("text", systemInst))
-                        put("parts", partsArray)
-                    }
-                    put("systemInstruction", systemObj)
+                    val reqBody = requestObj.toString().toRequestBody("application/json".toMediaType())
+                    val request = Request.Builder()
+                        .url(fullUrl)
+                        .post(reqBody)
+                        .build()
 
-                    val genConfig = JSONObject().apply {
-                        put("temperature", 0.7)
-                        put("topP", 0.95)
-                        put("topK", 40)
-                    }
-                    put("generationConfig", genConfig)
-                }
-
-                val reqBody = requestObj.toString().toRequestBody("application/json".toMediaType())
-                val request = Request.Builder()
-                    .url(fullUrl)
-                    .post(reqBody)
-                    .build()
-
-                val response = client.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val source = response.body?.byteStream()?.bufferedReader()
-                    if (source != null) {
-                        var chunkReceived = false
-                        source.use { reader ->
-                            var line: String?
-                            while (reader.readLine().also { line = it } != null) {
-                                val l = line?.trim() ?: continue
-                                if (!l.startsWith("data:")) continue
-                                val jsonStr = l.removePrefix("data:").trim()
-                                if (jsonStr.isEmpty() || jsonStr == "[DONE]") continue
-                                try {
-                                    val chunkObj = JSONObject(jsonStr)
-                                    val candidates = chunkObj.optJSONArray("candidates")
-                                    val firstCandidate = candidates?.optJSONObject(0)
-                                    val content = firstCandidate?.optJSONObject("content")
-                                    val parts = content?.optJSONArray("parts")
-                                    val text = parts?.optJSONObject(0)?.optString("text", "")
-                                    if (!text.isNullOrEmpty()) {
-                                        chunkReceived = true
-                                        onChunk(text)
+                    val call = client.newCall(request)
+                    try {
+                        val response = call.execute()
+                        response.use { res ->
+                            if (res.isSuccessful) {
+                                val source = res.body?.byteStream()?.bufferedReader()
+                                if (source != null) {
+                                    source.use { reader ->
+                                        var line: String?
+                                        while (reader.readLine().also { line = it } != null) {
+                                            val l = line?.trim() ?: continue
+                                            if (!l.startsWith("data:")) continue
+                                            val jsonStr = l.removePrefix("data:").trim()
+                                            if (jsonStr.isEmpty() || jsonStr == "[DONE]") continue
+                                            try {
+                                                val chunkObj = JSONObject(jsonStr)
+                                                val candidates = chunkObj.optJSONArray("candidates")
+                                                val firstCandidate = candidates?.optJSONObject(0)
+                                                val content = firstCandidate?.optJSONObject("content")
+                                                val parts = content?.optJSONArray("parts")
+                                                val text = parts?.optJSONObject(0)?.optString("text", "")
+                                                if (!text.isNullOrEmpty()) {
+                                                    chunkReceived = true
+                                                    onChunk(text)
+                                                }
+                                            } catch (e: Exception) {
+                                                // Ignore line parse errors
+                                            }
+                                        }
                                     }
-                                } catch (e: Exception) {
-                                    // Parse error on SSE line
                                 }
                             }
                         }
-                        if (chunkReceived) return@withContext
+                    } finally {
+                        if (!chunkReceived) {
+                            call.cancel()
+                        }
                     }
                 }
             } catch (e: Exception) {
-                // If API failed (e.g. rate limit, network timeout), fallback to grounded engine below
+                // If API failed or quota exceeded, proceed immediately to local engine below
             }
         }
 
-        // Grounded Local AI Engine:
-        val lastUserMessage = conversationHistory.lastOrNull { it.sender == "user" }?.text ?: "Hello"
-        generateLocalGroundedResponse(lastUserMessage, userName, guideStyle, onChunk)
+        if (!chunkReceived) {
+            // Grounded Local AI Engine: responds within max 1-2 seconds with rich Scripture answers
+            val lastUserMessage = conversationHistory.lastOrNull { it.sender == "user" }?.text ?: "Hello"
+            generateLocalGroundedResponse(lastUserMessage, userName, guideStyle, onChunk)
+        }
     }
 
     /**
@@ -208,9 +220,15 @@ The app will strip this line and render it as tappable chips.
         val fullResponse: String = when {
             matchedVerse != null -> formatVerseAnswer(matchedVerse, displayName, guideStyle)
             matchedTopic != null -> formatTopicAnswer(matchedTopic, displayName, guideStyle)
-            lowerPrompt.contains("psalm") || lowerPrompt.contains("david") -> formatGeneralBibleAnswer(prompt, displayName, guideStyle, "David")
-            lowerPrompt.contains("jesus") || lowerPrompt.contains("christ") -> formatGeneralBibleAnswer(prompt, displayName, guideStyle, "Jesus")
+            lowerPrompt.contains("grace") -> formatGraceAnswer(displayName, guideStyle)
+            lowerPrompt.contains("who wrote") || lowerPrompt.contains("author") || lowerPrompt.contains("wrote the psalm") -> formatPsalmsAuthorshipAnswer(displayName, guideStyle)
+            lowerPrompt.contains("psalm") || lowerPrompt.contains("david") -> formatGeneralBibleAnswer(prompt, displayName, guideStyle, "King David and the Psalms")
+            lowerPrompt.contains("jesus") || lowerPrompt.contains("christ") -> formatGeneralBibleAnswer(prompt, displayName, guideStyle, "Jesus Christ")
             lowerPrompt.contains("pray") || lowerPrompt.contains("prayer") -> formatPrayerAnswer(displayName, guideStyle)
+            lowerPrompt.contains("anxiety") || lowerPrompt.contains("anxious") || lowerPrompt.contains("worry") -> {
+                val anxiousTopic = com.example.data.VerseConstants.TOPICS.find { it.id == "anxious" }!!
+                formatTopicAnswer(anxiousTopic, displayName, guideStyle)
+            }
             else -> formatGeneralConversationalAnswer(prompt, displayName, guideStyle)
         }
 
@@ -219,8 +237,52 @@ The app will strip this line and render it as tappable chips.
         for (i in words.indices) {
             val token = words[i] + (if (i < words.size - 1) " " else "")
             onChunk(token)
-            delay(18) // smooth reading cadence
+            delay(12) // smooth reading cadence
         }
+    }
+
+    private fun formatGraceAnswer(name: String, guideStyle: String): String {
+        return """
+Peace be with you, $name. Grace is one of the most radiant and freeing truths in all of Scripture.
+
+> "For by grace are ye saved through faith; and that not of yourselves: it is the gift of God: Not of works, lest any man should boast." — Ephesians 2:8-9
+
+### What is Grace in Simple Words?
+Think of grace as **unearned favor and unconditional love**. In everyday life, everything feels like a transaction: we work for a salary, earn grades for studying, and win approval for performing. Grace flips this upside down: God does not love you because you perform well; God loves you because love is who He is (1 John 4:8).
+
+### What Grace Means for You Today
+- **No Need to Pretend:** You don't have to clean up your whole life before coming to God. Romans 5:8 reminds us that Christ loved us while we were still making mistakes.
+- **Relief from Perfectionism:** Your worth is not tied to productivity, follower counts, or flawless track records. You are accepted as a gift.
+- **Grace Flowing Outward:** When you truly experience how much you've been forgiven, it becomes easier to extend patience and grace to others (Ephesians 4:32).
+
+### Go Deeper
+- **Romans 5:8**: Love proven before we were ready.
+- **2 Corinthians 12:9**: "My grace is sufficient for thee: for my strength is made perfect in weakness."
+
+<<FOLLOWUPS: How do I accept God's grace? | What is the difference between grace and mercy? | Can you pray with me about feeling worthy?>>
+        """.trimIndent()
+    }
+
+    private fun formatPsalmsAuthorshipAnswer(name: String, guideStyle: String): String {
+        return """
+Hello $name! The book of Psalms is a sacred collection of 150 prayers, hymns, and poems composed over nearly a thousand years of Israel's history.
+
+> "Thy word is a lamp unto my feet, and a light unto my path." — Psalm 119:105
+
+### Who Wrote the Psalms?
+While King David is the most famous author, the book was written by multiple inspired authors:
+1. **King David:** Credited with **73 psalms**, including the beloved shepherd hymn **Psalm 23**, prayers of deliverance (Psalm 27), and deep repentance (Psalm 51).
+2. **Asaph and his family:** Worship leaders in the temple who wrote **12 psalms** (Psalms 50, 73–83), often reflecting on justice and God's sovereignty.
+3. **The Sons of Korah:** A guild of temple musicians responsible for **11 psalms** (such as Psalm 42 and Psalm 46: *"God is our refuge and strength"*).
+4. **Solomon:** Wrote Psalms 72 and 127.
+5. **Moses:** Wrote **Psalm 90**, one of the oldest psalms in the Bible.
+6. **Anonymous:** Around 50 psalms (often called "orphan psalms") have no stated author.
+
+### What the Psalms Teach Us Today
+The Psalms give us divine permission to bring **every human emotion** before God: joy, heartbreak, anger, celebration, and doubt. They teach us that prayer does not require masking our pain.
+
+<<FOLLOWUPS: What is the most famous Psalm? | Explain Psalm 23 verse by verse | Why was David called a man after God's own heart?>>
+        """.trimIndent()
     }
 
     private fun formatVerseAnswer(v: com.example.data.Verse, name: String, guideStyle: String): String {

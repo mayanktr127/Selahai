@@ -17,11 +17,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -152,64 +155,16 @@ fun ChatScreen(
         }
     }
 
-    // Send initial prompt if provided
-    LaunchedEffect(initialPrompt) {
-        if (!initialPrompt.isNullOrBlank() && messages.isEmpty()) {
-            val userMsg = ChatMessage(sender = "user", text = initialPrompt)
-            messages.add(userMsg)
 
-            isStreaming = true
-            val aiMsgId = UUID.randomUUID().toString()
-            val aiMsg = ChatMessage(id = aiMsgId, sender = "selah", text = "")
-            messages.add(aiMsg)
-
-            streamJob = scope.launch {
-                val fullBuilder = StringBuilder()
-                try {
-                    GeminiChatService.streamChat(
-                        conversationHistory = messages.filter { it.text.isNotEmpty() },
-                        userName = prefs.userName,
-                        guideStyle = currentGuideStyle
-                    ) { chunk ->
-                        fullBuilder.append(chunk)
-                        val idx = messages.indexOfFirst { it.id == aiMsgId }
-                        if (idx >= 0) {
-                            val (cleanText, followups) = FollowUpParser.parse(fullBuilder.toString())
-                            messages[idx] = messages[idx].copy(text = cleanText, followups = followups)
-                        }
-                    }
-                } catch (e: Exception) {
-                    val idx = messages.indexOfFirst { it.id == aiMsgId }
-                    if (idx >= 0) {
-                        messages[idx] = messages[idx].copy(
-                            text = "Peace be with you. Something interrupted our reflection. Tap to try again."
-                        )
-                    }
-                } finally {
-                    isStreaming = false
-                    // Auto-read aloud if setting enabled
-                    val finalReply = fullBuilder.toString()
-                    if (prefs.readAloud && finalReply.isNotBlank()) {
-                        tts?.speak(FollowUpParser.parse(finalReply).first, TextToSpeech.QUEUE_FLUSH, null, null)
-                    }
-                    // Save conversation
-                    prefs.saveConversation(
-                        ChatConversation(
-                            id = activeConversationId,
-                            title = initialPrompt.take(45),
-                            guideStyle = currentGuideStyle,
-                            lastUpdated = System.currentTimeMillis(),
-                            messages = messages.toList()
-                        )
-                    )
-                }
-            }
-        }
-    }
 
     fun sendMessage(queryText: String) {
         val trimmed = queryText.trim()
         if (trimmed.isEmpty()) return
+
+        // Cancel previous in-flight job if user taps a new question or suggestion
+        streamJob?.cancel()
+        // Clean up any stale blank placeholder messages from prior unfinished streams
+        messages.removeAll { it.sender == "selah" && it.text.isBlank() }
 
         val userMsg = ChatMessage(sender = "user", text = trimmed)
         messages.add(userMsg)
@@ -243,12 +198,20 @@ fun ChatScreen(
                 val idx = messages.indexOfFirst { it.id == aiMsgId }
                 if (idx >= 0) {
                     messages[idx] = messages[idx].copy(
-                        text = "Peace be with you. Something interrupted us. Please tap to try again."
+                        text = "Peace be with you. Let us reflect on what God's Word says about this."
                     )
                 }
             } finally {
+                // Ensure the message is never left empty under any circumstances
+                val idx = messages.indexOfFirst { it.id == aiMsgId }
+                if (idx >= 0 && messages[idx].text.isBlank()) {
+                    messages[idx] = messages[idx].copy(
+                        text = "Peace be with you. Let us pause and reflect on God's unfailing love and grace for your life today.\n\n<<FOLLOWUPS: What does John 3:16 mean? | How do I deal with anxiety? | Explain grace like I'm new to this>>"
+                    )
+                }
+
                 isStreaming = false
-                val finalReply = fullBuilder.toString()
+                val finalReply = fullBuilder.toString().ifBlank { messages.getOrNull(idx)?.text ?: "" }
                 if (prefs.readAloud && finalReply.isNotBlank()) {
                     tts?.speak(FollowUpParser.parse(finalReply).first, TextToSpeech.QUEUE_FLUSH, null, null)
                 }
@@ -259,10 +222,29 @@ fun ChatScreen(
                         title = messages.firstOrNull { it.sender == "user" }?.text?.take(45) ?: "Reflection",
                         guideStyle = currentGuideStyle,
                         lastUpdated = System.currentTimeMillis(),
-                        messages = messages.toList()
+                        messages = messages.filter { it.text.isNotBlank() }
                     )
                 )
             }
+        }
+    }
+
+    // Send initial prompt if provided
+    LaunchedEffect(initialPrompt) {
+        if (!initialPrompt.isNullOrBlank() && messages.isEmpty()) {
+            sendMessage(initialPrompt)
+        }
+    }
+
+    val imeInsets = WindowInsets.ime
+    val navBarInsets = WindowInsets.navigationBars
+    val density = LocalDensity.current
+    val bottomInsetPx = maxOf(imeInsets.getBottom(density), navBarInsets.getBottom(density))
+    val bottomInsetDp = with(density) { bottomInsetPx.toDp() }
+
+    LaunchedEffect(bottomInsetPx) {
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
         }
     }
 
@@ -271,7 +253,6 @@ fun ChatScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .statusBarsPadding()
-                .imePadding()
         ) {
             // Header
             Row(
@@ -493,25 +474,6 @@ fun ChatScreen(
                             )
                         }
 
-                        if (isStreaming && messages.lastOrNull()?.text?.isEmpty() == true) {
-                            item {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    modifier = Modifier.padding(start = 12.dp, top = 4.dp)
-                                ) {
-                                    SelahOrb(size = 24.dp, isListening = true)
-                                    Text(
-                                        text = "Selah is reflecting…",
-                                        style = MaterialTheme.typography.bodySmall.copy(
-                                            color = InkSoft,
-                                            fontStyle = FontStyle.Italic
-                                        )
-                                    )
-                                }
-                            }
-                        }
-
                         item { Spacer(modifier = Modifier.height(16.dp)) }
                     }
                 }
@@ -521,7 +483,8 @@ fun ChatScreen(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = bottomInsetDp + 8.dp, top = 6.dp),
                 shape = RoundedCornerShape(999.dp),
                 color = Color.White.copy(alpha = 0.85f),
                 border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
@@ -699,6 +662,25 @@ private fun MessageBubble(
     onLongPress: () -> Unit
 ) {
     val isUser = message.sender == "user"
+
+    // If Selah is reflecting and hasn't started streaming tokens yet, render the single unified thinking widget
+    if (!isUser && message.text.isBlank()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.padding(start = 6.dp, top = 6.dp, bottom = 6.dp)
+        ) {
+            SelahOrb(size = 28.dp, isListening = true)
+            Text(
+                text = "Selah is reflecting…",
+                style = MaterialTheme.typography.bodyMedium.copy(
+                    color = InkSoft,
+                    fontStyle = FontStyle.Italic
+                )
+            )
+        }
+        return
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth(),

@@ -279,6 +279,11 @@ fun SelahApp(
                                 }
                                 DockTab.PROFILE -> currentScreen = ScreenState.SAVED_PROFILE
                             }
+                        },
+                        onChatbotClick = {
+                            activeChatPrompt = null
+                            activeChatConversationId = null
+                            currentScreen = ScreenState.CHAT
                         }
                     )
                 }
