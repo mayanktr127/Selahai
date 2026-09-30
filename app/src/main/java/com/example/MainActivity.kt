@@ -33,6 +33,7 @@ import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.SavedProfileScreen
 import com.example.ui.screens.VerseDetailScreen
 import com.example.ui.screens.VoiceReflectionScreen
+import com.example.ui.screens.OnboardingScreen
 import com.example.ui.screens.WelcomeScreen
 import com.example.ui.theme.SelahTheme
 
@@ -77,9 +78,9 @@ fun SelahApp(
     prefs: SelahPreferences,
     onThemeChanged: (String) -> Unit
 ) {
-    // If user name exists, start on HOME; otherwise start on WELCOME onboarding
+    // When people open the app, they get the onboarding sanctuary flow
     var currentScreen by remember {
-        mutableStateOf(if (prefs.userName.isNotBlank()) ScreenState.HOME else ScreenState.WELCOME)
+        mutableStateOf(ScreenState.WELCOME)
     }
 
     var activeDockTab by remember { mutableStateOf(DockTab.HOME) }
@@ -117,15 +118,13 @@ fun SelahApp(
             ) { screen ->
                 when (screen) {
                     ScreenState.WELCOME -> {
-                        WelcomeScreen(
-                            initialName = prefs.userName,
-                            onContinue = { name ->
+                        OnboardingScreen(
+                            prefs = prefs,
+                            onComplete = { name, guideStyle ->
                                 prefs.userName = name
-                                currentScreen = ScreenState.CHOOSE_GUIDE
-                            },
-                            onSkip = {
-                                if (prefs.userName.isBlank()) prefs.userName = "Friend"
-                                currentScreen = ScreenState.CHOOSE_GUIDE
+                                prefs.guideStyle = guideStyle
+                                prefs.hasCompletedOnboarding = true
+                                currentScreen = ScreenState.HOME
                             }
                         )
                     }

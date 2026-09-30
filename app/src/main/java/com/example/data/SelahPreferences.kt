@@ -45,6 +45,44 @@ class SelahPreferences(context: Context) {
         get() = prefs.getBoolean("daily_reminder", true)
         set(value) = prefs.edit().putBoolean("daily_reminder", value).apply()
 
+    // Premium Subscription & Free Tier Timer
+    var isPremium: Boolean
+        get() = prefs.getBoolean("is_premium", false)
+        set(value) = prefs.edit().putBoolean("is_premium", value).apply()
+
+    var premiumTier: String
+        get() = prefs.getString("premium_tier", "none") ?: "none"
+        set(value) = prefs.edit().putString("premium_tier", value).apply()
+
+    var freeSecondsRemaining: Int
+        get() = prefs.getInt("free_seconds_remaining", 420) // 7 minutes default
+        set(value) = prefs.edit().putInt("free_seconds_remaining", value.coerceAtLeast(0)).apply()
+
+    var activeModelId: String
+        get() = prefs.getString("active_model_id", "claude-sonnet") ?: "claude-sonnet"
+        set(value) = prefs.edit().putString("active_model_id", value).apply()
+
+    var hasCompletedOnboarding: Boolean
+        get() = prefs.getBoolean("has_completed_onboarding", false)
+        set(value) = prefs.edit().putBoolean("has_completed_onboarding", value).apply()
+
+    fun consumeFreeSeconds(seconds: Int = 1): Int {
+        if (isPremium) return 9999
+        val current = freeSecondsRemaining
+        val updated = (current - seconds).coerceAtLeast(0)
+        freeSecondsRemaining = updated
+        return updated
+    }
+
+    fun resetFreeTimer() {
+        freeSecondsRemaining = 420
+    }
+
+    fun activateSubscription(tier: String) {
+        isPremium = true
+        premiumTier = tier
+    }
+
     fun getSavedVerseIds(): Set<Int> {
         val stringSet = prefs.getStringSet("saved_verses", emptySet()) ?: emptySet()
         return stringSet.mapNotNull { it.toIntOrNull() }.toSet()
