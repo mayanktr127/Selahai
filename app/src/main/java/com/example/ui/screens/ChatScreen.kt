@@ -1,16 +1,20 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
 import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,24 +22,12 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Timer
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.ui.platform.LocalDensity
-import com.example.data.AvailableModels
-import com.example.data.LlmModel
-import com.example.ui.components.ChatHistorySheet
-import com.example.ui.components.ModelSelectorPill
-import com.example.ui.components.ModelSwitcherSheet
-import com.example.ui.components.SubscriptionPaywallModal
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -47,25 +39,28 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeUp
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.ThumbUp
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +82,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
@@ -96,16 +92,20 @@ import com.example.data.ChatConversation
 import com.example.data.ChatMessage
 import com.example.data.SelahPreferences
 import com.example.data.VerseRepository
+import com.example.ui.components.ChatSideDrawerContent
 import com.example.ui.components.DawnBackground
 import com.example.ui.components.FollowUpChips
 import com.example.ui.components.FollowUpParser
-import com.example.ui.components.GlassCard
 import com.example.ui.components.SelahOrb
 import com.example.ui.theme.Dawn100
 import com.example.ui.theme.Ember
 import com.example.ui.theme.EmberDeep
 import com.example.ui.theme.Ink
 import com.example.ui.theme.InkSoft
+import com.example.ui.theme.NightBase
+import com.example.ui.theme.NightSurface
+import com.example.ui.theme.NightText
+import com.example.ui.theme.NightTextSoft
 import com.example.ui.theme.ScriptureVerseStyle
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -120,42 +120,33 @@ fun ChatScreen(
     initialPrompt: String? = null,
     conversationId: String? = null,
     prefs: SelahPreferences,
-    onBack: () -> Unit,
     onNavigateToVoice: () -> Unit,
-    onOpenVerseDetail: (Int) -> Unit
+    onNavigateToProfile: () -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+
+    val systemDark = isSystemInDarkTheme()
+    val isDark = when (prefs.themeMode) {
+        "dark" -> true
+        "light" -> false
+        else -> systemDark
+    }
+
+    val primaryTextColor = if (isDark) NightText else Ink
+    val secondaryTextColor = if (isDark) NightTextSoft else InkSoft
 
     var inputQuery by remember { mutableStateOf("") }
     var isStreaming by remember { mutableStateOf(false) }
     var streamJob by remember { mutableStateOf<Job?>(null) }
     var activeConversationId by remember { mutableStateOf(conversationId ?: UUID.randomUUID().toString()) }
     var currentGuideStyle by remember { mutableStateOf(prefs.guideStyle) }
-    var isPremium by remember { mutableStateOf(prefs.isPremium) }
-    var freeSecondsLeft by remember { mutableIntStateOf(prefs.freeSecondsRemaining) }
-    var activeModel by remember { mutableStateOf(AvailableModels.getById(prefs.activeModelId)) }
-
-    var showModelSwitcher by remember { mutableStateOf(false) }
-    var showChatHistory by remember { mutableStateOf(false) }
-    var showPaywall by remember { mutableStateOf(false) }
-
-    // Live Session Timer Countdown for Free Tier (5-7 mins total session limit)
-    LaunchedEffect(isPremium, freeSecondsLeft) {
-        if (!isPremium && freeSecondsLeft > 0) {
-            while (freeSecondsLeft > 0) {
-                kotlinx.coroutines.delay(1000L)
-                freeSecondsLeft -= 1
-                prefs.freeSecondsRemaining = freeSecondsLeft
-            }
-            showPaywall = true
-        }
-    }
 
     val messages = remember { mutableStateListOf<ChatMessage>() }
     var selectedMessageForActions by remember { mutableStateOf<ChatMessage?>(null) }
-    var showMenu by remember { mutableStateOf(false) }
+
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
 
     // TTS Setup
     var tts by remember { mutableStateOf<TextToSpeech?>(null) }
@@ -173,28 +164,62 @@ fun ChatScreen(
         }
     }
 
-    // Load conversation if existing
+    // Speech-to-text dictation launcher
+    val speechRecognizerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()
+            if (!spokenText.isNullOrBlank()) {
+                inputQuery = if (inputQuery.isBlank()) spokenText else "$inputQuery $spokenText"
+            }
+        }
+    }
+
+    fun startDictation() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Ask Selah…")
+        }
+        try {
+            speechRecognizerLauncher.launch(intent)
+        } catch (e: Exception) {
+            Toast.makeText(context, "Voice dictation is not available on this device", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Function to start a fresh chat
+    fun startNewChat() {
+        streamJob?.cancel()
+        isStreaming = false
+        activeConversationId = UUID.randomUUID().toString()
+        messages.clear()
+        inputQuery = ""
+    }
+
+    // Function to load a saved conversation
+    fun loadConversation(convId: String) {
+        streamJob?.cancel()
+        isStreaming = false
+        activeConversationId = convId
+        val conv = prefs.getConversations().find { it.id == convId }
+        if (conv != null) {
+            messages.clear()
+            messages.addAll(conv.messages)
+            currentGuideStyle = conv.guideStyle
+        }
+    }
+
+    // Load initial conversation if provided
     LaunchedEffect(conversationId) {
         if (conversationId != null) {
-            val conv = prefs.getConversations().find { it.id == conversationId }
-            if (conv != null) {
-                messages.clear()
-                messages.addAll(conv.messages)
-                currentGuideStyle = conv.guideStyle
-                activeModel = AvailableModels.models.find { it.guideStyleKey == conv.guideStyle } ?: activeModel
-            }
+            loadConversation(conversationId)
         }
     }
 
     fun sendMessage(queryText: String) {
         val trimmed = queryText.trim()
         if (trimmed.isEmpty()) return
-
-        // Check if free session expired
-        if (!isPremium && freeSecondsLeft <= 0) {
-            showPaywall = true
-            return
-        }
 
         // Cancel previous in-flight job if user taps a new question or suggestion
         streamJob?.cancel()
@@ -237,7 +262,7 @@ fun ChatScreen(
                     )
                 }
             } finally {
-                // Ensure the message is never left empty under any circumstances
+                // Ensure the message is never left empty
                 val idx = messages.indexOfFirst { it.id == aiMsgId }
                 if (idx >= 0 && messages[idx].text.isBlank()) {
                     messages[idx] = messages[idx].copy(
@@ -250,7 +275,7 @@ fun ChatScreen(
                 if (prefs.readAloud && finalReply.isNotBlank()) {
                     tts?.speak(FollowUpParser.parse(finalReply).first, TextToSpeech.QUEUE_FLUSH, null, null)
                 }
-                // Save conversation
+                // Save conversation to recents history
                 prefs.saveConversation(
                     ChatConversation(
                         id = activeConversationId,
@@ -271,379 +296,206 @@ fun ChatScreen(
         }
     }
 
-    val imeInsets = WindowInsets.ime
-    val navBarInsets = WindowInsets.navigationBars
-    val density = LocalDensity.current
-    val bottomInsetPx = maxOf(imeInsets.getBottom(density), navBarInsets.getBottom(density))
-    val bottomInsetDp = with(density) { bottomInsetPx.toDp() }
-
-    LaunchedEffect(bottomInsetPx) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size - 1)
-        }
-    }
-
-    DawnBackground {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-        ) {
-            // Redesigned ChatGPT / Claude Style Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = true,
+        drawerContent = {
+            ModalDrawerSheet(
+                drawerContainerColor = if (isDark) NightSurface else Color(0xFFFFF9F5),
+                drawerShape = RoundedCornerShape(topEnd = 20.dp, bottomEnd = 20.dp),
+                modifier = Modifier.width(310.dp)
             ) {
-                // Left: Back button + Previous Chats button
+                ChatSideDrawerContent(
+                    prefs = prefs,
+                    activeConversationId = activeConversationId,
+                    onSelectConversation = { convId ->
+                        scope.launch { drawerState.close() }
+                        loadConversation(convId)
+                    },
+                    onNewChat = {
+                        scope.launch { drawerState.close() }
+                        startNewChat()
+                    },
+                    onOpenProfile = {
+                        scope.launch { drawerState.close() }
+                        onNavigateToProfile()
+                    },
+                    onDeleteConversation = { convId ->
+                        prefs.deleteConversation(convId)
+                        if (activeConversationId == convId) {
+                            startNewChat()
+                        }
+                    }
+                )
+            }
+        }
+    ) {
+        DawnBackground {
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Top Bar: Menu (hamburger) on left, New-chat on right. Plain, clean background.
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     IconButton(
-                        onClick = onBack,
+                        onClick = { scope.launch { drawerState.open() } },
                         modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.7f))
-                            .testTag("chat_back_button")
+                            .size(44.dp)
+                            .testTag("chat_menu_button")
                     ) {
                         Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Ink,
-                            modifier = Modifier.size(20.dp)
+                            imageVector = Icons.Default.Menu,
+                            contentDescription = "Open Navigation Menu",
+                            tint = primaryTextColor,
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 
                     IconButton(
-                        onClick = { showChatHistory = true },
+                        onClick = { startNewChat() },
                         modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.7f))
-                            .testTag("chat_history_button")
+                            .size(44.dp)
+                            .testTag("chat_new_chat_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.ChatBubbleOutline,
-                            contentDescription = "Previous Chats",
-                            tint = Ink,
-                            modifier = Modifier.size(19.dp)
+                            imageVector = Icons.Default.Edit,
+                            contentDescription = "New Chat",
+                            tint = primaryTextColor,
+                            modifier = Modifier.size(22.dp)
                         )
                     }
                 }
 
-                // Center: ChatGPT/Claude Model Selector Pill
-                ModelSelectorPill(
-                    currentModel = activeModel,
-                    onClick = { showModelSwitcher = true }
-                )
-
-                // Right: Free Tier Timer / Pro Badge + Voice Mode
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                // Middle: Empty State or Messages List
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
                 ) {
-                    if (!isPremium) {
-                        val mins = freeSecondsLeft / 60
-                        val secs = freeSecondsLeft % 60
-                        val timeStr = String.format("%d:%02d", mins, secs)
-                        val isUrgent = freeSecondsLeft <= 60
-
-                        Surface(
-                            onClick = { showPaywall = true },
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (isUrgent) Color(0xFFFFECEB) else Color.White.copy(alpha = 0.8f),
-                            border = BorderStroke(1.dp, if (isUrgent) Color(0xFFE53935) else Ember.copy(alpha = 0.4f)),
-                            modifier = Modifier.testTag("free_timer_chip")
+                    if (messages.isEmpty()) {
+                        // Empty State: Small Selah Orb (~48px) + "Hi {name}, what's on your heart?" in serif font. Nothing else.
+                        val displayName = if (prefs.userName.isNotBlank()) prefs.userName else "Friend"
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 24.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Timer,
-                                    contentDescription = null,
-                                    tint = if (isUrgent) Color(0xFFE53935) else Ember,
-                                    modifier = Modifier.size(12.dp)
-                                )
+                                SelahOrb(size = 48.dp, isPulsing = true)
+                                Spacer(modifier = Modifier.height(18.dp))
                                 Text(
-                                    text = timeStr,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = if (isUrgent) Color(0xFFE53935) else EmberDeep,
-                                        fontSize = 11.sp
-                                    )
+                                    text = "Hi $displayName, what's on your heart?",
+                                    style = MaterialTheme.typography.headlineSmall.copy(
+                                        fontFamily = FontFamily.Serif,
+                                        fontStyle = FontStyle.Italic,
+                                        fontWeight = FontWeight.Normal,
+                                        color = primaryTextColor,
+                                        fontSize = 21.sp
+                                    ),
+                                    textAlign = TextAlign.Center
                                 )
                             }
                         }
                     } else {
-                        Surface(
-                            shape = RoundedCornerShape(999.dp),
-                            color = Ember.copy(alpha = 0.15f),
-                            border = BorderStroke(1.dp, Ember.copy(alpha = 0.3f))
-                        ) {
-                            Text(
-                                text = "✦ Pro",
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontWeight = FontWeight.Bold,
-                                    color = EmberDeep,
-                                    fontSize = 11.sp
-                                ),
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
-
-                    IconButton(
-                        onClick = onNavigateToVoice,
-                        modifier = Modifier
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color.White.copy(alpha = 0.7f))
-                            .testTag("switch_to_voice_pill")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.GraphicEq,
-                            contentDescription = "Voice Mode",
-                            tint = Ember,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-
-                    // Options menu
-                    Box {
-                        IconButton(
-                            onClick = { showMenu = true },
+                        // Messages List in existing chat bubble style
+                        LazyColumn(
+                            state = listState,
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.7f))
-                                .testTag("chat_menu_button")
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.MoreVert,
-                                contentDescription = "Options",
-                                tint = Ink,
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("New chat") },
-                            onClick = {
-                                showMenu = false
-                                messages.clear()
-                                activeConversationId = UUID.randomUUID().toString()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Guide: ${currentGuideStyle.replaceFirstChar { it.uppercase() }}") },
-                            onClick = {
-                                showMenu = false
-                                val styles = listOf("scholar", "shepherd", "storyteller", "friend")
-                                val next = styles[(styles.indexOf(currentGuideStyle) + 1) % styles.size]
-                                currentGuideStyle = next
-                                prefs.guideStyle = next
-                                Toast.makeText(context, "Guide changed to ${next.replaceFirstChar { it.uppercase() }}", Toast.LENGTH_SHORT).show()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Clear messages") },
-                            onClick = {
-                                showMenu = false
-                                messages.clear()
-                            }
-                        )
-                    }
-                }
-            }
-        }
-
-        // Message List or Empty State
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) {
-                if (messages.isEmpty()) {
-                    // Empty state starter prompts
-                    Column(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(24.dp),
-                        verticalArrangement = Arrangement.Center,
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        SelahOrb(size = 80.dp, isPulsing = true)
-                        Spacer(modifier = Modifier.height(18.dp))
-                        Text(
-                            text = "How can I guide your reflection today?",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = Ink
-                            )
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "Ask a question, explore a passage, or tap a topic below:",
-                            style = MaterialTheme.typography.bodyMedium.copy(color = InkSoft)
-                        )
-
-                        Spacer(modifier = Modifier.height(24.dp))
-
-                        val starterPrompts = listOf(
-                            "What does John 3:16 really mean?",
-                            "How do I deal with anxiety biblically?",
-                            "Who wrote the Psalms?",
-                            "Explain grace like I'm new to this"
-                        )
-
-                        starterPrompts.forEach { prompt ->
-                            Surface(
-                                onClick = { sendMessage(prompt) },
-                                shape = RoundedCornerShape(999.dp),
-                                color = Color.White.copy(alpha = 0.75f),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
-                                shadowElevation = 2.dp,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 5.dp)
-                            ) {
-                                Text(
-                                    text = prompt,
-                                    style = MaterialTheme.typography.bodyMedium.copy(
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = Ink
-                                    ),
-                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        itemsIndexed(messages) { index, msg ->
-                            // Optional timestamp between groups
-                            if (index == 0 || (msg.timestamp - messages[index - 1].timestamp) > 300000) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Surface(
-                                        shape = RoundedCornerShape(999.dp),
-                                        color = Color.White.copy(alpha = 0.5f)
+                            itemsIndexed(messages) { index, msg ->
+                                if (index == 0 || (msg.timestamp - messages[index - 1].timestamp) > 300000) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 4.dp),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Text(
-                                            text = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(msg.timestamp)),
-                                            style = MaterialTheme.typography.labelSmall.copy(color = InkSoft),
-                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                                        )
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = if (isDark) NightSurface.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.5f)
+                                        ) {
+                                            Text(
+                                                text = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(msg.timestamp)),
+                                                style = MaterialTheme.typography.labelSmall.copy(color = secondaryTextColor),
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                            )
+                                        }
                                     }
                                 }
-                            }
 
-                            MessageBubble(
-                                message = msg,
-                                isStreamingLast = isStreaming && index == messages.size - 1 && msg.sender == "selah",
-                                onReferenceClick = { ref ->
-                                    val verse = VerseRepository.getByReference(ref)
-                                    if (verse != null) {
-                                        onOpenVerseDetail(verse.id)
-                                    } else {
-                                        sendMessage("Tell me about the passage $ref")
-                                    }
-                                },
-                                onFollowUpClick = { q -> sendMessage(q) },
-                                onLongPress = { selectedMessageForActions = msg }
-                            )
-                        }
-
-                        item { Spacer(modifier = Modifier.height(16.dp)) }
-                    }
-                }
-            }
-
-            // Input Bar
-            // Input Bar or Session Expired Paywall Bar
-            if (!isPremium && freeSecondsLeft <= 0) {
-                Surface(
-                    onClick = { showPaywall = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .padding(bottom = bottomInsetDp + 8.dp, top = 6.dp)
-                        .testTag("chat_paywall_trigger_bar"),
-                    shape = RoundedCornerShape(999.dp),
-                    color = Color.White.copy(alpha = 0.95f),
-                    border = BorderStroke(1.5.dp, Ember),
-                    shadowElevation = 6.dp
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(32.dp)
-                                    .clip(CircleShape)
-                                    .background(Ember.copy(alpha = 0.15f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(Icons.Default.Timer, contentDescription = null, tint = Ember, modifier = Modifier.size(18.dp))
-                            }
-                            Column {
-                                Text(
-                                    text = "Free 7-Min Reflection Ended",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Ink, fontSize = 14.sp)
-                                )
-                                Text(
-                                    text = "Tap to unlock unlimited ($7.99/mo, $75/yr, $100 lifetime)",
-                                    style = MaterialTheme.typography.bodySmall.copy(color = InkSoft, fontSize = 11.sp)
+                                MessageBubble(
+                                    message = msg,
+                                    isDark = isDark,
+                                    isStreamingLast = isStreaming && index == messages.size - 1 && msg.sender == "selah",
+                                    onReferenceClick = { ref ->
+                                        // Requirement 4: make references send "Explain {reference}" as a new message
+                                        sendMessage("Explain $ref")
+                                    },
+                                    onFollowUpClick = { q -> sendMessage(q) },
+                                    onCopy = { text ->
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Selah Message", text))
+                                        Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onSpeak = { text ->
+                                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, null)
+                                    },
+                                    onRegenerate = {
+                                        val lastUserQuery = messages.lastOrNull { it.sender == "user" }?.text
+                                        if (!lastUserQuery.isNullOrBlank()) {
+                                            if (messages.lastOrNull()?.sender == "selah") {
+                                                messages.removeAt(messages.size - 1)
+                                            }
+                                            if (messages.lastOrNull()?.sender == "user") {
+                                                messages.removeAt(messages.size - 1)
+                                            }
+                                            sendMessage(lastUserQuery)
+                                        }
+                                    },
+                                    onShare = { text ->
+                                        val sendIntent = Intent().apply {
+                                            action = Intent.ACTION_SEND
+                                            putExtra(Intent.EXTRA_TEXT, text)
+                                            type = "text/plain"
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Share Reflection"))
+                                    },
+                                    onLike = {
+                                        Toast.makeText(context, "Saved reflection! ✦", Toast.LENGTH_SHORT).show()
+                                    },
+                                    onLongPress = { selectedMessageForActions = msg }
                                 )
                             }
-                        }
 
-                        Surface(shape = RoundedCornerShape(999.dp), color = Ember) {
-                            Text(
-                                text = "Upgrade",
-                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, color = Color.White),
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
+                            item { Spacer(modifier = Modifier.height(16.dp)) }
                         }
                     }
                 }
-            } else {
+
+                // Bottom: One rounded input container pinned to bottom. Respects safe area & moves up with keyboard.
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp)
-                        .padding(bottom = bottomInsetDp + 8.dp, top = 6.dp),
+                        .padding(bottom = 8.dp)
+                        .navigationBarsPadding()
+                        .imePadding(),
                     shape = RoundedCornerShape(999.dp),
-                    color = Color.White.copy(alpha = 0.85f),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.White),
+                    color = if (isDark) NightSurface else Color.White.copy(alpha = 0.95f),
+                    border = BorderStroke(1.dp, if (isDark) Color.White.copy(alpha = 0.12f) else Color.White),
                     shadowElevation = 6.dp
                 ) {
                     Row(
@@ -657,8 +509,8 @@ fun ChatScreen(
                             onValueChange = { inputQuery = it },
                             placeholder = {
                                 Text(
-                                    text = "Ask Selah (${activeModel.name})…",
-                                    style = MaterialTheme.typography.bodyMedium.copy(color = InkSoft)
+                                    text = "Ask Selah…",
+                                    style = MaterialTheme.typography.bodyMedium.copy(color = secondaryTextColor)
                                 )
                             },
                             colors = OutlinedTextFieldDefaults.colors(
@@ -666,15 +518,32 @@ fun ChatScreen(
                                 unfocusedBorderColor = Color.Transparent,
                                 focusedContainerColor = Color.Transparent,
                                 unfocusedContainerColor = Color.Transparent,
-                                focusedTextColor = Ink,
-                                unfocusedTextColor = Ink
+                                focusedTextColor = primaryTextColor,
+                                unfocusedTextColor = primaryTextColor
                             ),
                             modifier = Modifier
                                 .weight(1f)
                                 .testTag("chat_input_field")
                         )
 
-                        // Mic / Stop / Send Buttons
+                        // On the right: mic icon for dictation
+                        IconButton(
+                            onClick = { startDictation() },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .testTag("chat_mic_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Mic,
+                                contentDescription = "Dictate",
+                                tint = secondaryTextColor,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        // Round voice button (waveform) -> changes to send (arrow) when text is typed -> changes to stop when streaming
                         if (isStreaming) {
                             IconButton(
                                 onClick = {
@@ -682,7 +551,7 @@ fun ChatScreen(
                                     isStreaming = false
                                 },
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
                                     .background(Ember)
                                     .testTag("chat_stop_button")
@@ -691,14 +560,14 @@ fun ChatScreen(
                                     imageVector = Icons.Default.Stop,
                                     contentDescription = "Stop",
                                     tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         } else if (inputQuery.isNotBlank()) {
                             IconButton(
                                 onClick = { sendMessage(inputQuery) },
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
                                     .background(Ember)
                                     .testTag("chat_send_button")
@@ -707,21 +576,21 @@ fun ChatScreen(
                                     imageVector = Icons.AutoMirrored.Filled.Send,
                                     contentDescription = "Send",
                                     tint = Color.White,
-                                    modifier = Modifier.size(20.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         } else {
                             IconButton(
                                 onClick = onNavigateToVoice,
                                 modifier = Modifier
-                                    .size(40.dp)
+                                    .size(38.dp)
                                     .clip(CircleShape)
-                                    .background(Ember.copy(alpha = 0.12f))
-                                    .testTag("chat_mic_button")
+                                    .background(if (isDark) Ember.copy(alpha = 0.25f) else Ember.copy(alpha = 0.12f))
+                                    .testTag("chat_voice_button")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.Mic,
-                                    contentDescription = "Dictation",
+                                    imageVector = Icons.Default.GraphicEq,
+                                    contentDescription = "Voice Reflection",
                                     tint = Ember,
                                     modifier = Modifier.size(20.dp)
                                 )
@@ -731,137 +600,84 @@ fun ChatScreen(
                 }
             }
         }
+    }
 
-        // Long Press Actions Sheet
-        selectedMessageForActions?.let { msg ->
-            ModalBottomSheet(
-                onDismissRequest = { selectedMessageForActions = null },
-                containerColor = Color(0xFFFFF6F1),
-                shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+    // Long Press Actions Sheet
+    selectedMessageForActions?.let { msg ->
+        ModalBottomSheet(
+            onDismissRequest = { selectedMessageForActions = null },
+            containerColor = if (isDark) NightSurface else Color(0xFFFFF6F1),
+            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Column(
+                Text(
+                    text = "Message Options",
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = primaryTextColor
+                    )
+                )
+
+                // Copy
+                Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                        .clickable {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                            clipboard.setPrimaryClip(ClipData.newPlainText("Selah Message", msg.text))
+                            Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+                            selectedMessageForActions = null
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "Message Options",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold, color = Ink)
-                    )
+                    Icon(Icons.Default.ContentCopy, contentDescription = null, tint = primaryTextColor)
+                    Text("Copy message", style = MaterialTheme.typography.bodyLarge.copy(color = primaryTextColor))
+                }
 
-                    // Copy
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                clipboard.setPrimaryClip(ClipData.newPlainText("Selah Message", msg.text))
-                                Toast.makeText(context, "Copied to clipboard", Toast.LENGTH_SHORT).show()
-                                selectedMessageForActions = null
-                            }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Ink)
-                        Text("Copy message", style = MaterialTheme.typography.bodyLarge.copy(color = Ink))
-                    }
+                // Read Aloud
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            tts?.speak(msg.text, TextToSpeech.QUEUE_FLUSH, null, null)
+                            selectedMessageForActions = null
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = primaryTextColor)
+                    Text("Read aloud", style = MaterialTheme.typography.bodyLarge.copy(color = primaryTextColor))
+                }
 
-                    // Read Aloud
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                tts?.speak(msg.text, TextToSpeech.QUEUE_FLUSH, null, null)
-                                selectedMessageForActions = null
+                // Share
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            val sendIntent = Intent().apply {
+                                action = Intent.ACTION_SEND
+                                putExtra(Intent.EXTRA_TEXT, msg.text)
+                                type = "text/plain"
                             }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = Ink)
-                        Text("Read aloud", style = MaterialTheme.typography.bodyLarge.copy(color = Ink))
-                    }
-
-                    // Share
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val sendIntent = Intent().apply {
-                                    action = Intent.ACTION_SEND
-                                    putExtra(Intent.EXTRA_TEXT, msg.text)
-                                    type = "text/plain"
-                                }
-                                context.startActivity(Intent.createChooser(sendIntent, "Share Reflection"))
-                                selectedMessageForActions = null
-                            }
-                            .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(Icons.Default.Share, contentDescription = null, tint = Ink)
-                        Text("Share reflection", style = MaterialTheme.typography.bodyLarge.copy(color = Ink))
-                    }
+                            context.startActivity(Intent.createChooser(sendIntent, "Share Reflection"))
+                            selectedMessageForActions = null
+                        }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(Icons.Default.Share, contentDescription = null, tint = primaryTextColor)
+                    Text("Share reflection", style = MaterialTheme.typography.bodyLarge.copy(color = primaryTextColor))
                 }
             }
-        }
-
-        // ChatGPT & Claude Style Model Switcher Sheet
-        if (showModelSwitcher) {
-            ModelSwitcherSheet(
-                selectedModelId = activeModel.id,
-                onModelSelected = { newModel ->
-                    activeModel = newModel
-                    prefs.activeModelId = newModel.id
-                    currentGuideStyle = newModel.guideStyleKey
-                },
-                onDismiss = { showModelSwitcher = false }
-            )
-        }
-
-        // Previous Chats Drawer / History Sheet
-        if (showChatHistory) {
-            ChatHistorySheet(
-                prefs = prefs,
-                activeConversationId = activeConversationId,
-                onSelectConversation = { convId ->
-                    activeConversationId = convId
-                    val conv = prefs.getConversations().find { it.id == convId }
-                    if (conv != null) {
-                        messages.clear()
-                        messages.addAll(conv.messages)
-                        currentGuideStyle = conv.guideStyle
-                        activeModel = AvailableModels.models.find { it.guideStyleKey == conv.guideStyle } ?: activeModel
-                    }
-                },
-                onNewChat = {
-                    streamJob?.cancel()
-                    activeConversationId = UUID.randomUUID().toString()
-                    messages.clear()
-                    inputQuery = ""
-                    isStreaming = false
-                },
-                onUpgradeClick = {
-                    showPaywall = true
-                },
-                onDismiss = { showChatHistory = false }
-            )
-        }
-
-        // Subscription Paywall Modal ($7.99/mo, $75/yr, $100 lifetime)
-        if (showPaywall) {
-            SubscriptionPaywallModal(
-                prefs = prefs,
-                onDismiss = { showPaywall = false },
-                onSubscribed = {
-                    isPremium = true
-                    freeSecondsLeft = 9999
-                    showPaywall = false
-                    Toast.makeText(context, "Welcome to Selah Pro! Unlimited reflection unlocked.", Toast.LENGTH_LONG).show()
-                }
-            )
         }
     }
 }
@@ -869,25 +685,66 @@ fun ChatScreen(
 @Composable
 private fun MessageBubble(
     message: ChatMessage,
+    isDark: Boolean,
     isStreamingLast: Boolean,
     onReferenceClick: (String) -> Unit,
     onFollowUpClick: (String) -> Unit,
+    onCopy: (String) -> Unit,
+    onSpeak: (String) -> Unit,
+    onRegenerate: () -> Unit,
+    onShare: (String) -> Unit,
+    onLike: () -> Unit,
     onLongPress: () -> Unit
 ) {
     val isUser = message.sender == "user"
+    val primaryTextColor = if (isDark) NightText else Ink
+    val secondaryTextColor = if (isDark) NightTextSoft else InkSoft
 
-    // If Selah is reflecting and hasn't started streaming tokens yet, render the single unified thinking widget
-    if (!isUser && message.text.isBlank()) {
+    if (isUser) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Box(
+                modifier = Modifier
+                    .widthIn(max = 330.dp)
+                    .clip(
+                        RoundedCornerShape(
+                            topStart = 20.dp,
+                            topEnd = 20.dp,
+                            bottomStart = 20.dp,
+                            bottomEnd = 4.dp
+                        )
+                    )
+                    .background(Brush.linearGradient(listOf(Color(0xFFFF7A4D), Ember)))
+                    .clickable { onLongPress() }
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = message.text,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = Color.White,
+                        lineHeight = 22.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                )
+            }
+        }
+        return
+    }
+
+    // Thinking indicator if tokens haven't arrived yet
+    if (message.text.isBlank()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.padding(start = 6.dp, top = 6.dp, bottom = 6.dp)
         ) {
-            SelahOrb(size = 28.dp, isListening = true)
+            SelahOrb(size = 26.dp, isListening = true)
             Text(
                 text = "Selah is reflecting…",
                 style = MaterialTheme.typography.bodyMedium.copy(
-                    color = InkSoft,
+                    color = secondaryTextColor,
                     fontStyle = FontStyle.Italic
                 )
             )
@@ -895,60 +752,119 @@ private fun MessageBubble(
         return
     }
 
+    // Assistant message bubble
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Row(
-            modifier = Modifier.widthIn(max = 340.dp),
-            verticalAlignment = Alignment.Bottom,
-            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.Bottom
         ) {
-            if (!isUser) {
-                SelahOrb(
-                    size = 28.dp,
-                    isPulsing = false,
-                    modifier = Modifier.padding(end = 8.dp, bottom = 4.dp)
-                )
-            }
+            SelahOrb(
+                size = 28.dp,
+                isPulsing = false,
+                modifier = Modifier.padding(end = 8.dp, bottom = 4.dp)
+            )
 
             Box(
                 modifier = Modifier
+                    .weight(1f, fill = false)
+                    .widthIn(max = 350.dp)
                     .clip(
                         RoundedCornerShape(
                             topStart = 22.dp,
                             topEnd = 22.dp,
-                            bottomStart = if (isUser) 22.dp else 4.dp,
-                            bottomEnd = if (isUser) 4.dp else 22.dp
+                            bottomStart = 4.dp,
+                            bottomEnd = 22.dp
                         )
                     )
-                    .background(
-                        if (isUser) {
-                            Brush.linearGradient(listOf(Color(0xFFFF7A4D), Ember))
-                        } else {
-                            Brush.linearGradient(listOf(Color.White.copy(alpha = 0.9f), Color.White.copy(alpha = 0.8f)))
-                        }
-                    )
+                    .background(if (isDark) NightSurface else Color.White.copy(alpha = 0.92f))
                     .border(
                         width = 1.dp,
-                        color = if (isUser) Color.Transparent else Color.White,
+                        color = if (isDark) Color.White.copy(alpha = 0.1f) else Color.White,
                         shape = RoundedCornerShape(22.dp)
                     )
                     .clickable { onLongPress() }
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                    .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                if (isUser) {
-                    Text(
-                        text = message.text,
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            color = Color.White,
-                            lineHeight = 22.sp
-                        )
+                FormattedSelahMessage(
+                    text = message.text + (if (isStreamingLast) " ▍" else ""),
+                    isDark = isDark,
+                    onReferenceClick = onReferenceClick
+                )
+            }
+        }
+
+        // Action Toolbar underneath assistant message
+        if (!isStreamingLast && message.text.isNotBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 36.dp, top = 2.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { onCopy(message.text) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copy message",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(16.dp)
                     )
-                } else {
-                    FormattedSelahMessage(
-                        text = message.text,
-                        onReferenceClick = onReferenceClick
+                }
+
+                IconButton(
+                    onClick = { onSpeak(message.text) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.VolumeUp,
+                        contentDescription = "Read aloud",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onRegenerate,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Regenerate answer",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = { onShare(message.text) },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share reflection",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onLike,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ThumbUp,
+                        contentDescription = "Helpful",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(15.dp)
                     )
                 }
             }
@@ -959,7 +875,7 @@ private fun MessageBubble(
             FollowUpChips(
                 followups = message.followups,
                 onSelect = onFollowUpClick,
-                modifier = Modifier.padding(start = 36.dp, top = 6.dp)
+                modifier = Modifier.padding(start = 36.dp, top = 2.dp)
             )
         }
     }
@@ -968,10 +884,13 @@ private fun MessageBubble(
 @Composable
 private fun FormattedSelahMessage(
     text: String,
+    isDark: Boolean,
     onReferenceClick: (String) -> Unit
 ) {
     val references = remember(text) { VerseRepository.findReferencesInText(text) }
     val lines = text.split("\n")
+    val primaryTextColor = if (isDark) NightText else Ink
+    val secondaryTextColor = if (isDark) NightTextSoft else InkSoft
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         lines.forEach { line ->
@@ -984,10 +903,10 @@ private fun FormattedSelahMessage(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Dawn100.copy(alpha = 0.5f))
+                            .background(if (isDark) NightBase.copy(alpha = 0.6f) else Dawn100.copy(alpha = 0.5f))
                             .border(
                                 width = 1.dp,
-                                color = Ember.copy(alpha = 0.2f),
+                                color = Ember.copy(alpha = 0.3f),
                                 shape = RoundedCornerShape(12.dp)
                             )
                             .padding(12.dp)
@@ -1005,7 +924,7 @@ private fun FormattedSelahMessage(
                                 style = ScriptureVerseStyle.copy(
                                     fontSize = 15.sp,
                                     lineHeight = 22.sp,
-                                    color = Ink
+                                    color = primaryTextColor
                                 )
                             )
                         }
@@ -1016,14 +935,13 @@ private fun FormattedSelahMessage(
                         text = trimmed.removePrefix("###").trim(),
                         style = MaterialTheme.typography.titleSmall.copy(
                             fontWeight = FontWeight.Bold,
-                            color = EmberDeep
+                            color = if (isDark) Color(0xFFFFB74D) else EmberDeep
                         ),
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
                 else -> {
                     if (trimmed.isNotEmpty()) {
-                        // Check if line contains a scripture reference chip
                         val matchedRef = references.find { trimmed.contains(it) }
                         if (matchedRef != null) {
                             val annotated = buildAnnotatedString {
@@ -1043,7 +961,7 @@ private fun FormattedSelahMessage(
                             Text(
                                 text = annotated,
                                 style = MaterialTheme.typography.bodyLarge.copy(
-                                    color = Ink,
+                                    color = primaryTextColor,
                                     lineHeight = 22.sp
                                 ),
                                 modifier = Modifier.clickable { onReferenceClick(matchedRef) }
@@ -1052,7 +970,7 @@ private fun FormattedSelahMessage(
                             Text(
                                 text = trimmed,
                                 style = MaterialTheme.typography.bodyLarge.copy(
-                                    color = Ink,
+                                    color = primaryTextColor,
                                     lineHeight = 22.sp
                                 )
                             )

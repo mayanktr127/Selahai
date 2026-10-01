@@ -17,12 +17,12 @@ import java.util.concurrent.TimeUnit
 
 object GeminiChatService {
     private val client = OkHttpClient.Builder()
-        .connectTimeout(2, TimeUnit.SECONDS)
-        .readTimeout(4, TimeUnit.SECONDS)
-        .writeTimeout(3, TimeUnit.SECONDS)
+        .connectTimeout(6, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(8, TimeUnit.SECONDS)
         .build()
 
-    private const val MODEL = "gemini-3.5-flash"
+    private const val MODEL = "gemini-2.5-flash"
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:streamGenerateContent?alt=sse"
 
     fun buildSystemInstruction(userName: String, guideStyle: String): String {
@@ -99,8 +99,8 @@ The app will strip this line and render it as tappable chips.
 
         if (hasValidKey) {
             try {
-                // Enforce a strict 1.2s budget to receive data from remote network
-                withTimeoutOrNull(1200L) {
+                // Allow up to 5s budget to connect and stream remote LLM tokens
+                withTimeoutOrNull(5000L) {
                     val fullUrl = "$BASE_URL&key=$apiKey"
                     val systemInst = buildSystemInstruction(userName, guideStyle)
 
@@ -229,7 +229,13 @@ The app will strip this line and render it as tappable chips.
                 val anxiousTopic = com.example.data.VerseConstants.TOPICS.find { it.id == "anxious" }!!
                 formatTopicAnswer(anxiousTopic, displayName, guideStyle)
             }
-            else -> formatGeneralConversationalAnswer(prompt, displayName, guideStyle)
+            lowerPrompt.contains("moses") -> formatMosesAnswer(displayName, guideStyle)
+            lowerPrompt.contains("abraham") -> formatAbrahamAnswer(displayName, guideStyle)
+            lowerPrompt.contains("paul") -> formatPaulAnswer(displayName, guideStyle)
+            lowerPrompt.contains("peter") -> formatPeterAnswer(displayName, guideStyle)
+            lowerPrompt.contains("love") -> formatLoveAnswer(displayName, guideStyle)
+            lowerPrompt.contains("faith") -> formatFaithAnswer(displayName, guideStyle)
+            else -> formatDynamicKnowledgeBaseAnswer(prompt, displayName, guideStyle)
         }
 
         // Stream tokens realistically
@@ -239,6 +245,179 @@ The app will strip this line and render it as tappable chips.
             onChunk(token)
             delay(12) // smooth reading cadence
         }
+    }
+
+    private fun formatDynamicKnowledgeBaseAnswer(prompt: String, name: String, guideStyle: String): String {
+        val lowerPrompt = prompt.lowercase()
+        // Extract meaningful search terms
+        val words = lowerPrompt.split(Regex("[^a-zA-Z0-9]+"))
+            .filter { it.length > 2 && it !in setOf("what", "does", "the", "say", "about", "can", "you", "tell", "explain", "meaning", "how", "why", "who", "when", "where", "with", "from", "for", "and", "that", "this", "help") }
+
+        // Find candidate verses from knowledge base
+        val candidateVerses = mutableListOf<com.example.data.Verse>()
+        for (w in words) {
+            candidateVerses.addAll(VerseRepository.search(w))
+        }
+
+        val primaryVerse = candidateVerses.groupBy { it.id }
+            .maxByOrNull { it.value.size }?.value?.firstOrNull()
+            ?: VerseRepository.search(lowerPrompt).firstOrNull()
+            ?: VerseRepository.getVerseOfTheDay()
+
+        val secondaryVerse = candidateVerses.find { it.id != primaryVerse.id }
+            ?: VerseRepository.allVerses.find { it.part == primaryVerse.part && it.id != primaryVerse.id }
+            ?: VerseRepository.getById(if (primaryVerse.id == 1) 74 else 1)!!
+
+        val cleanQuery = prompt.trim().removeSuffix("?").removeSuffix(".")
+
+        val opening = when (guideStyle) {
+            "scholar" -> "Let us explore the scriptural, historical, and theological dimensions of \"$cleanQuery\"."
+            "shepherd" -> "That is a deeply meaningful question to bring before God, $name. Let us look at what His Word reveals concerning \"$cleanQuery\"."
+            "storyteller" -> "Across the broad tapestry of Scripture, the question of \"$cleanQuery\" touches the deepest rhythms of human faith."
+            else -> "That is a wonderful question to explore, $name. Here is what Scripture and biblical wisdom reveal about \"$cleanQuery\":"
+        }
+
+        val closingNote = when (guideStyle) {
+            "shepherd" -> "\n\n*A blessing for you today:*\n> \"The Lord bless thee, and keep thee: The Lord make his face shine upon thee, and be gracious unto thee.\" (Numbers 6:24-25)"
+            else -> "\n\nTake a quiet moment to reflect on these words today. Let Scripture guide your thoughts and give you peace."
+        }
+
+        return """
+$opening
+
+A foundational anchor for this inquiry is found in **${primaryVerse.reference}**:
+
+> "${primaryVerse.text}" — ${primaryVerse.reference}
+
+### Biblical Setting & Background
+${primaryVerse.setting}
+
+### Theological Insight & Meaning
+${primaryVerse.meaning} When we reflect on your question, God's Word reminds us that truth is both timeless and deeply personal. It invites us to trust in God's character rather than relying solely on our own understanding (Proverbs 3:5).
+
+### What This Means For You Today
+- **Everyday Practice:** ${primaryVerse.today}
+- **Mindset Shift:** Focus not on the anxiety of unanswered questions, but on the certainty of God's steadfast presence.
+- **Companion Promise:** Consider also **${secondaryVerse.reference}**: *"${secondaryVerse.text}"* — which speaks to God's providence and care.
+$closingNote
+
+<<FOLLOWUPS: How can I apply ${primaryVerse.reference} today? | What other passages address this? | Can you pray for me about this?>>
+        """.trimIndent()
+    }
+
+    private fun formatMosesAnswer(name: String, guideStyle: String): String {
+        return """
+Hello $name! Moses is one of the most towering and transformative figures in all of sacred Scripture.
+
+> "And the LORD spake unto Moses face to face, as a man speaketh unto his friend." — Exodus 33:11
+
+### Who Was Moses?
+Moses was called by God to lead the Israelites out of four centuries of Egyptian slavery, receive the Law and the Ten Commandments at Mount Sinai, and shepherd God's people through the wilderness toward the Promised Land.
+
+### Key Milestones in Moses's Life:
+1. **The Basket in the Nile:** Rescued by Pharaoh's daughter and raised in the royal palace of Egypt.
+2. **The Burning Bush (Exodus 3):** God met Moses in Midian, revealing His sacred name: *"I AM THAT I AM."* Despite Moses's feelings of inadequacy and speech hesitation, God promised: *"Certainly I will be with thee."*
+3. **The Exodus & Red Sea:** Through ten plagues and the parting of the Red Sea, God displayed His mighty power of redemption.
+4. **The Law at Mount Sinai (Exodus 20):** Moses received the Ten Commandments, establishing a covenant of justice, holiness, and love.
+
+### What Moses Teaches Us Today
+Moses was not a superhero; he was an ordinary man who wrestled with self-doubt. God did not call him because of his perfection, but because of his willingness to be used. When you feel unequipped for what lies ahead, remember that God's strength is made perfect in human weakness (2 Corinthians 12:9).
+
+<<FOLLOWUPS: What were the Ten Commandments? | Why did Moses not enter the Promised Land? | Tell me about the Burning Bush>>
+        """.trimIndent()
+    }
+
+    private fun formatAbrahamAnswer(name: String, guideStyle: String): String {
+        return """
+Hello $name! Abraham is revered as the father of faith across Judaism, Christianity, and Islam.
+
+> "And he believed in the LORD; and he counted it to him for righteousness." — Genesis 15:6
+
+### Who Was Abraham?
+Originally named Abram from Ur of the Chaldees, God called him at age 75 to leave everything familiar and journey to a land that God would show him (Genesis 12:1-3). God established an eternal covenant with him, promising:
+1. **A Great Nation:** His descendants would be as numerous as the stars in the night sky.
+2. **A Promised Land:** The land of Canaan for his descendants.
+3. **A Universal Blessing:** *"In thee shall all families of the earth be blessed."*
+
+### What Abraham Teaches Us Today
+Hebrews 11:8 notes: *"By faith Abraham, when he was called to go out into a place which he should after receive for an inheritance, obeyed; and he went out, not knowing whither he went."* Faith is trusting God when you cannot see the full picture. It means taking the next faithful step with confidence in God's promises.
+
+<<FOLLOWUPS: How did Abraham demonstrate faith? | What was the covenant with Abraham? | Who was Sarah in the Bible?>>
+        """.trimIndent()
+    }
+
+    private fun formatPaulAnswer(name: String, guideStyle: String): String {
+        return """
+Peace be with you, $name. The Apostle Paul is the most influential missionary and theologian of the New Testament church.
+
+> "I have fought a good fight, I have finished my course, I have kept the faith." — 2 Timothy 4:7
+
+### The Story of Paul (formerly Saul of Tarsus):
+1. **The Persecutor:** Zealous Pharisee who initially opposed the early Christian movement.
+2. **Damascus Road (Acts 9):** A blinding encounter with the risen Jesus transformed his heart entirely.
+3. **The Global Apostle:** Journeyed across the Mediterranean world establishing churches and writing 13 New Testament letters (including Romans, Galatians, Ephesians, and Philippians).
+4. **Theology of Grace:** Paul championed the radical message that we are justified by faith in Christ, not by legalistic works.
+
+### Key Lesson for Us:
+No past mistake or failure is too great for God to redeem. Paul referred to himself as the *"chief of sinners"* (1 Timothy 1:15), yet God made him a beacon of hope and grace.
+
+<<FOLLOWUPS: What happened on the Damascus Road? | What are Paul's most famous letters? | Explain Romans 8 in detail>>
+        """.trimIndent()
+    }
+
+    private fun formatPeterAnswer(name: String, guideStyle: String): String {
+        return """
+Hello $name! Simon Peter is one of the most relatable, passionate disciples of Jesus.
+
+> "And Simon Peter answered and said, Thou art the Christ, the Son of the living God." — Matthew 16:16
+
+### Peter's Journey:
+- **The Call:** A humble Galilean fisherman who dropped his nets when Jesus said: *"Follow me, and I will make you fishers of men."*
+- **Stepping on the Water (Matthew 14):** The only disciple with the bold courage to step out of the boat into the storm.
+- **Denial and Restoration:** After denying Jesus three times in his darkest hour, the risen Christ gently restored him by the Sea of Galilee, asking three times: *"Simon, son of Jonas, lovest thou me? Feed my sheep."* (John 21).
+- **The Pillar of Pentecost:** Filled with the Holy Spirit in Acts 2, Peter preached with boldness and led thousands to faith.
+
+### What Peter Teaches Us:
+Peter proves that a momentary failure does not define your final destination in God's kingdom. God uses cracked vessels to carry His glorious light.
+
+<<FOLLOWUPS: Why did Peter deny Jesus? | Tell me about Peter walking on water | What are the letters of 1 and 2 Peter about?>>
+        """.trimIndent()
+    }
+
+    private fun formatLoveAnswer(name: String, guideStyle: String): String {
+        return """
+Love is the very essence of God's character and the supreme commandment of the Bible, $name.
+
+> "Charity suffereth long, and is kind; charity envieth not; charity vaunteth not itself, is not puffed up... Charity never faileth." — 1 Corinthians 13:4, 8
+
+### Three Biblical Insights on Love:
+1. **Agape Love:** In the Greek New Testament, the highest form of love is *Agape* — unconditional, self-giving, sacrificial love that seeks the good of another without expecting anything in return.
+2. **God is Love (1 John 4:8):** Love is not just an emotion God feels; it is who God is.
+3. **The Greatest Commandment:** When asked for the greatest law, Jesus replied: *"Love the Lord your God with all your heart... and love your neighbour as yourself."* (Matthew 22:37-39).
+
+### Living Love Today:
+Love in action means patience with difficult people, choosing kindness over being right, and showing empathy to those who are hurting.
+
+<<FOLLOWUPS: Explain 1 Corinthians 13 verse by verse | What is the difference between agape and phileo? | How do I love someone who hurt me?>>
+        """.trimIndent()
+    }
+
+    private fun formatFaithAnswer(name: String, guideStyle: String): String {
+        return """
+Faith is the anchor of the soul, $name.
+
+> "Now faith is the substance of things hoped for, the evidence of things not seen." — Hebrews 11:1
+
+### What is Biblical Faith?
+Biblical faith is not blind optimism or wishful thinking. It is **anchored trust in a reliable God**. It is leaning your full weight upon God's character and promises even when circumstances seem turbulent.
+
+### Key Aspects of Faith:
+- **Trust over sight (2 Corinthians 5:7):** *"For we walk by faith, not by sight."*
+- **Faith like a mustard seed (Matthew 17:20):** You don't need gigantic, flawless faith — you just need sincere faith in a gigantic God.
+- **Active obedience (James 2:17):** Real faith naturally blossoms into acts of love and compassion.
+
+<<FOLLOWUPS: How can I grow my faith when doubting? | What is the Hall of Faith in Hebrews 11? | How do faith and works work together?>>
+        """.trimIndent()
     }
 
     private fun formatGraceAnswer(name: String, guideStyle: String): String {
